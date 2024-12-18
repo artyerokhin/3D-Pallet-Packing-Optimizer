@@ -92,3 +92,7 @@ streamlit run app.py
 ## Лицензия
 
 MIT License
+
+## Пример работы программы
+
+<img src="images/demo.png" alt="3D Bin Packing Demo" width="800"/>
