@@ -3,3 +3,4 @@ plotly>=5.13.0
 numpy>=1.23.5
 py3dbp>=1.1.0
 enum34>=1.1.10
+pytest>=7.4.0

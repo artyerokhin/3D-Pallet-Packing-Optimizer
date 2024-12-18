@@ -1,6 +1,5 @@
 from py3dbp import Packer
 import time
-from src.packers.stability import StabilityAwarePacker
 
 class WeightAwarePacker(Packer):
     def __init__(self):

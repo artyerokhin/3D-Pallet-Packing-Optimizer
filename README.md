@@ -76,22 +76,33 @@ streamlit run app.py
 3D-Pallet-Packing-Optimizer/
 ├── src/
 │   ├── packers/
+│   │   ├── __init__.py
 │   │   ├── weight_aware.py    # Weight-Aware алгоритм
 │   │   ├── extreme_points.py  # Extreme Points алгоритм
 │   │   ├── laff.py           # LAFF алгоритм
 │   │   ├── corner_points.py  # Corner Points алгоритм
 │   │   └── sfc.py           # SFC алгоритм
 │   └── utils/
-│       ├── visualization.py
-│       └── constants.py
-├── app.py
-├── requirements.txt
+│       ├── __init__.py
+│       ├── visualization.py   # Функции визуализации
+│       └── constants.py       # Константы и перечисления
+├── tests/
+│   └── test_base.py          # Базовые тесты
+├── app.py                     # Основное приложение
+├── requirements.txt          # Зависимости проекта
+├── .gitignore
 └── README.md
 ```
 
 ## Лицензия
 
 MIT License
+
+## Запуск тестов
+
+```bash
+pytest tests/test_base.py -v
+```
 
 ## Пример работы программы
 
