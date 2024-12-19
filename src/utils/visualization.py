@@ -96,6 +96,11 @@ def create_3d_visualization(packer):
     pallet_trace = create_pallet_trace(bin_dims)
     fig.add_trace(pallet_trace)
     
+    # Цвета для пользовательских коробок
+    custom_colors = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'pink', 'cyan']
+    custom_box_colors = {}
+    color_index = 0
+    
     sorted_items = sorted(
         packer.bins[0].items,
         key=lambda x: x.position[2]
@@ -105,14 +110,24 @@ def create_3d_visualization(packer):
         pos = [item.position[0], item.position[1], item.position[2]]
         dims = [item.width, item.height, item.depth]
         box_type = get_box_type_from_name(item.name)
-        color = STANDARD_BOXES[box_type]['color']
+        
+        # Получаем цвет из STANDARD_BOXES или назначаем новый для типа коробки
+        if box_type in STANDARD_BOXES:
+            color = STANDARD_BOXES[box_type]['color']
+        else:
+            if box_type not in custom_box_colors:
+                custom_box_colors[box_type] = custom_colors[color_index % len(custom_colors)]
+                color_index += 1
+            color = custom_box_colors[box_type]
+            
         vertices, faces = get_cube_vertices_and_faces(pos, dims)
         box_mesh, box_edges = create_mesh_trace_with_edges(
             vertices, faces, color, 0.7, f'Коробка {item.name}'
         )
+        
         fig.add_trace(box_mesh)
         fig.add_trace(box_edges)
-    
+
     fig.update_layout(
         scene=dict(
             aspectmode='cube',
@@ -134,4 +149,5 @@ def create_3d_visualization(packer):
             x=0.99
         )
     )
+    
     return fig
