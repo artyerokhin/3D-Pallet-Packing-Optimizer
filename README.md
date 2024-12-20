@@ -103,6 +103,7 @@ streamlit run app.py
 │       └── constants.py       # Константы и перечисления
 ├── tests/
 │   └── test_base.py          # Базовые тесты
+│   └── test_file_operations.py          # Тесты работы с файлами
 ├── examples/
 │   └── boxes_example.csv         # Пример файла
 ├── results/                # Создается автоматом
