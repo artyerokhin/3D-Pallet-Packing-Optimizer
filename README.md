@@ -29,7 +29,7 @@
 ## Установка
 
 ```bash
-git clone https://github.com/yourusername/3D-Pallet-Packing-Optimizer.git
+git clone https://github.com/artyerokhin/3D-Pallet-Packing-Optimizer.git
 cd 3D-Pallet-Packing-Optimizer
 pip install -r requirements.txt
 ```
