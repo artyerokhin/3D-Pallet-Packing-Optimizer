@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 import os
 
+
 def load_boxes_from_file(file):
     """Загрузка коробок из CSV/Excel файла"""
     try:
@@ -22,7 +23,8 @@ def load_boxes_from_file(file):
     except Exception as e:
         raise ValueError(f"Ошибка при загрузке файла: {str(e)}")
 
-def save_packing_result(packer, space_utilization):
+
+def save_packing_result(packer, space_utilization, save_dir='results'):
     """Сохранение результатов упаковки"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
@@ -34,21 +36,17 @@ def save_packing_result(packer, space_utilization):
             'depth': packer.bins[0].depth,
             'max_weight': packer.bins[0].max_weight
         },
-        'packed_items': [
-            {
-                'name': item.name,
-                'position': item.position,
-                'dimensions': [item.width, item.height, item.depth],
-                'weight': item.weight
-            } for item in packer.bins[0].items
-        ],
-        'unpacked_items': [
-            {
-                'name': item.name,
-                'dimensions': [item.width, item.height, item.depth],
-                'weight': item.weight
-            } for item in packer.unpacked_items
-        ],
+        'packed_items': [{
+            'name': item.name,
+            'position': item.position,
+            'dimensions': [item.width, item.height, item.depth],
+            'weight': item.weight
+        } for item in packer.bins[0].items],
+        'unpacked_items': [{
+            'name': item.name,
+            'dimensions': [item.width, item.height, item.depth],
+            'weight': item.weight
+        } for item in packer.unpacked_items],
         'statistics': {
             'space_utilization': space_utilization,
             'total_items': len(packer.items),
@@ -58,10 +56,8 @@ def save_packing_result(packer, space_utilization):
         }
     }
     
-    os.makedirs('results', exist_ok=True)
-    filename = f'results/packing_result_{timestamp}.json'
-    
+    os.makedirs(save_dir, exist_ok=True)
+    filename = f'{save_dir}/packing_result_{timestamp}.json'
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    
     return filename
