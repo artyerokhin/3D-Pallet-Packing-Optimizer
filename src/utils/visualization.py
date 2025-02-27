@@ -1,4 +1,6 @@
 import plotly.graph_objects as go
+import plotly.express as px
+import pandas as pd
 from .constants import STANDARD_BOXES
 
 def get_box_type_from_name(name):
@@ -15,14 +17,16 @@ def get_cube_vertices_and_faces(pos, dims):
         [pos[0]+dims[0], pos[1]+dims[1], pos[2]+dims[2]],
         [pos[0], pos[1]+dims[1], pos[2]+dims[2]]
     ]
+    
     faces = [
-        [0, 1, 2], [0, 2, 3],  # нижняя грань
-        [4, 5, 6], [4, 6, 7],  # верхняя грань
-        [0, 1, 5], [0, 5, 4],  # передняя грань
-        [2, 3, 7], [2, 7, 6],  # задняя грань
-        [0, 3, 7], [0, 7, 4],  # левая грань
-        [1, 2, 6], [1, 6, 5]   # правая грань
+        [0, 1, 2], [0, 2, 3], # нижняя грань
+        [4, 5, 6], [4, 6, 7], # верхняя грань
+        [0, 1, 5], [0, 5, 4], # передняя грань
+        [2, 3, 7], [2, 7, 6], # задняя грань
+        [0, 3, 7], [0, 7, 4], # левая грань
+        [1, 2, 6], [1, 6, 5] # правая грань
     ]
+    
     return vertices, faces
 
 def create_mesh_trace_with_edges(vertices, faces, color, opacity, name):
@@ -32,7 +36,6 @@ def create_mesh_trace_with_edges(vertices, faces, color, opacity, name):
     i = [f[0] for f in faces]
     j = [f[1] for f in faces]
     k = [f[2] for f in faces]
-    
     mesh = go.Mesh3d(
         x=x, y=y, z=z,
         i=i, j=j, k=k,
@@ -46,16 +49,15 @@ def create_mesh_trace_with_edges(vertices, faces, color, opacity, name):
     lines_y = []
     lines_z = []
     edges = [
-        (0,1), (1,2), (2,3), (3,0),  # нижняя грань
-        (4,5), (5,6), (6,7), (7,4),  # верхняя грань
-        (0,4), (1,5), (2,6), (3,7)   # вертикальные ребра
+        (0,1), (1,2), (2,3), (3,0), # нижняя грань
+        (4,5), (5,6), (6,7), (7,4), # верхняя грань
+        (0,4), (1,5), (2,6), (3,7) # вертикальные ребра
     ]
     
     for edge in edges:
         lines_x.extend([vertices[edge[0]][0], vertices[edge[1]][0], None])
         lines_y.extend([vertices[edge[0]][1], vertices[edge[1]][1], None])
         lines_z.extend([vertices[edge[0]][2], vertices[edge[1]][2], None])
-    
     lines = go.Scatter3d(
         x=lines_x,
         y=lines_y,
@@ -75,6 +77,7 @@ def create_pallet_trace(dims):
         [dims[0], dims[1], 0],
         [0, dims[1], 0]
     ]
+    
     faces = [[0, 1, 2], [0, 2, 3]]
     x = [v[0] for v in vertices]
     y = [v[1] for v in vertices]
@@ -93,6 +96,8 @@ def create_pallet_trace(dims):
 def create_3d_visualization(packer):
     fig = go.Figure()
     bin_dims = [packer.bins[0].width, packer.bins[0].height, packer.bins[0].depth]
+    
+    # Добавляем поддон
     pallet_trace = create_pallet_trace(bin_dims)
     fig.add_trace(pallet_trace)
     
@@ -101,6 +106,7 @@ def create_3d_visualization(packer):
     custom_box_colors = {}
     color_index = 0
     
+    # Сортируем элементы по высоте для лучшего отображения
     sorted_items = sorted(
         packer.bins[0].items,
         key=lambda x: x.position[2]
@@ -119,7 +125,7 @@ def create_3d_visualization(packer):
                 custom_box_colors[box_type] = custom_colors[color_index % len(custom_colors)]
                 color_index += 1
             color = custom_box_colors[box_type]
-            
+        
         vertices, faces = get_cube_vertices_and_faces(pos, dims)
         box_mesh, box_edges = create_mesh_trace_with_edges(
             vertices, faces, color, 0.7, f'Коробка {item.name}'
@@ -127,7 +133,7 @@ def create_3d_visualization(packer):
         
         fig.add_trace(box_mesh)
         fig.add_trace(box_edges)
-
+    
     fig.update_layout(
         scene=dict(
             aspectmode='cube',
