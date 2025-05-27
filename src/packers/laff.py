@@ -1,3 +1,5 @@
+# src/packers/laff.py
+
 from .base_packer import BasePacker
 
 class LAFFPacker(BasePacker):
@@ -7,7 +9,6 @@ class LAFFPacker(BasePacker):
 
     def pack(self):
         self._start_timing()
-        
         if not self._initialize_packing():
             return
 
@@ -119,12 +120,12 @@ class LAFFPacker(BasePacker):
                 y + item.height > other.position[1]):
                 if x + item.width == other.position[0] or x == other.position[0] + other.width:
                     contact_area += min(item.height, other.height)
-
+            
             # Контакт по Y
             if (x < other.position[0] + other.width and
                 x + item.width > other.position[0]):
                 if y + item.height == other.position[1] or y == other.position[1] + other.height:
                     contact_area += min(item.width, other.width)
-
+        
         # ИСПРАВЛЕНО: добавлен return
         return -contact_area
