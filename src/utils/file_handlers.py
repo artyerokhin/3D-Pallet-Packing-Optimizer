@@ -81,28 +81,10 @@ def validate_box_data(df):
         non_int_rows = df[non_integer_mask].index.tolist()
         raise ValueError(f"Количество должно быть целым числом в строках: {non_int_rows}")
     
-    # Проверка максимального количества
-    large_quantity_mask = df['quantity'] > 10000
-    if large_quantity_mask.any():
-        large_qty_rows = df[large_quantity_mask].index.tolist()
-        raise ValueError(f"Подозрительно большое количество (>{10000}) в строках: {large_qty_rows}")
-    
     # Проверка уникальности имен
     duplicate_names = df[df['name'].duplicated()]['name'].unique()
     if len(duplicate_names) > 0:
         raise ValueError(f"Обнаружены дублирующиеся имена коробок: {list(duplicate_names)}")
-    
-    # Проверка длины имен
-    long_names_mask = df['name'].str.len() > 50
-    if long_names_mask.any():
-        long_name_rows = df[long_names_mask].index.tolist()
-        raise ValueError(f"Слишком длинные имена коробок (>50 символов) в строках: {long_name_rows}")
-    
-    # Проверка на специальные символы в именах
-    invalid_chars_mask = df['name'].str.contains(r'[<>:"/\\|?*]', regex=True, na=False)
-    if invalid_chars_mask.any():
-        invalid_rows = df[invalid_chars_mask].index.tolist()
-        raise ValueError(f"Недопустимые символы в именах коробок в строках: {invalid_rows}")
     
     # Удаляем временные столбцы
     df = df.drop(['volume', 'density'], axis=1)
@@ -120,10 +102,6 @@ def validate_file_format(file):
     if file_extension not in allowed_extensions:
         raise ValueError(f"Неподдерживаемый формат файла: {file_extension}. "
                         f"Поддерживаются: {', '.join(allowed_extensions)}")
-    
-    # Проверка размера файла (максимум 10 МБ)
-    if hasattr(file, 'size') and file.size > 10 * 1024 * 1024:
-        raise ValueError("Размер файла превышает 10 МБ")
     
     return True
 
@@ -151,10 +129,6 @@ def load_boxes_from_file(file):
         if df.empty:
             raise ValueError("Загруженный файл пуст")
         
-        # Проверка максимального количества строк
-        if len(df) > 10000:
-            raise ValueError(f"Слишком много строк в файле: {len(df)}. Максимум: 10000")
-        
         # Очистка данных от лишних пробелов
         string_columns = df.select_dtypes(include=['object']).columns
         for col in string_columns:
@@ -175,13 +149,16 @@ def load_boxes_from_file(file):
         else:
             raise ValueError(f"Ошибка при загрузке файла: {str(e)}")
 
-def save_packing_result(packer, space_utilization, save_dir='results'):
-    """Сохранение результатов упаковки с улучшенной обработкой ошибок"""
+def save_packing_result_with_analytics(packer, space_utilization, save_dir='results'):
+    """Сохранение результатов упаковки с расширенной аналитикой"""
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Создаем директорию если её нет
         os.makedirs(save_dir, exist_ok=True)
+        
+        # Получаем детальную аналитику
+        analytics = packer.generate_detailed_analytics()
         
         # Расчет дополнительной статистики
         total_volume = sum(item.width * item.height * item.depth for item in packer.items)
@@ -192,14 +169,18 @@ def save_packing_result(packer, space_utilization, save_dir='results'):
         result = {
             'metadata': {
                 'timestamp': timestamp,
-                'version': '1.0',
-                'generator': '3D Pallet Packing Optimizer'
+                'version': '2.0',
+                'generator': '3D Pallet Packing Optimizer',
+                'algorithm_used': packer.__class__.__name__
             },
             'pallet': {
-                'width': packer.bins[0].width,
-                'height': packer.bins[0].height,
-                'depth': packer.bins[0].depth,
-                'max_weight': getattr(packer.bins[0], 'max_weight', 1000)
+                'dimensions': {
+                    'width': packer.bins[0].width,
+                    'height': packer.bins[0].height,
+                    'depth': packer.bins[0].depth
+                },
+                'max_weight': getattr(packer.bins[0], 'max_weight', 1000),
+                'volume': packer.bins[0].width * packer.bins[0].height * packer.bins[0].depth
             },
             'packed_items': [{
                 'name': item.name,
@@ -214,7 +195,8 @@ def save_packing_result(packer, space_utilization, save_dir='results'):
                     'depth': item.depth
                 },
                 'weight': item.weight,
-                'volume': item.width * item.height * item.depth
+                'volume': item.width * item.height * item.depth,
+                'level': packer._get_level_for_height(item.position[2]) if hasattr(packer, '_get_level_for_height') else 0
             } for item in packer.bins[0].items],
             'unpacked_items': [{
                 'name': item.name,
@@ -227,7 +209,7 @@ def save_packing_result(packer, space_utilization, save_dir='results'):
                 'volume': item.width * item.height * item.depth,
                 'reason': 'Не удалось разместить'
             } for item in packer.unpacked_items],
-            'statistics': {
+            'basic_statistics': {
                 'space_utilization': round(space_utilization, 2),
                 'volume_utilization': round(packed_volume / total_volume * 100, 2) if total_volume > 0 else 0,
                 'weight_utilization': round(packed_weight / total_weight * 100, 2) if total_weight > 0 else 0,
@@ -241,10 +223,11 @@ def save_packing_result(packer, space_utilization, save_dir='results'):
                 'total_weight': total_weight,
                 'packed_weight': packed_weight
             },
+            'detailed_analytics': analytics,
             'issues': getattr(packer, 'packing_issues', [])
         }
         
-        filename = f'{save_dir}/packing_result_{timestamp}.json'
+        filename = f'{save_dir}/packing_result_detailed_{timestamp}.json'
         
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
@@ -257,3 +240,83 @@ def save_packing_result(packer, space_utilization, save_dir='results'):
         raise ValueError(f"Ошибка при сериализации данных: {str(e)}")
     except Exception as e:
         raise ValueError(f"Неожиданная ошибка при сохранении: {str(e)}")
+
+def save_packing_result(packer, space_utilization, save_dir='results'):
+    """Обратная совместимость - базовое сохранение результатов"""
+    return save_packing_result_with_analytics(packer, space_utilization, save_dir)
+
+def export_analytics_to_excel(packer, analytics, save_dir='results'):
+    """Экспорт аналитики в Excel с множественными листами"""
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f'{save_dir}/analytics_report_{timestamp}.xlsx'
+        
+        os.makedirs(save_dir, exist_ok=True)
+        
+        with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
+            # Лист 1: Основные метрики
+            efficiency_df = pd.DataFrame([analytics['efficiency_metrics']])
+            efficiency_df.to_excel(writer, sheet_name='Эффективность', index=False)
+            
+            # Лист 2: Анализ размещения
+            placement_data = []
+            for item in packer.bins[0].items:
+                placement_data.append({
+                    'Имя': item.name,
+                    'X': item.position[0],
+                    'Y': item.position[1],
+                    'Z': item.position[2],
+                    'Ширина': item.width,
+                    'Высота': item.height,
+                    'Глубина': item.depth,
+                    'Вес': item.weight,
+                    'Объем': item.width * item.height * item.depth,
+                    'Уровень': packer._get_level_for_height(item.position[2]) if hasattr(packer, '_get_level_for_height') else 0
+                })
+            
+            placement_df = pd.DataFrame(placement_data)
+            placement_df.to_excel(writer, sheet_name='Размещение', index=False)
+            
+            # Лист 3: Анализ по уровням
+            if 'items_by_level' in analytics['placement_analysis']:
+                level_data = []
+                for level, data in analytics['placement_analysis']['items_by_level'].items():
+                    level_data.append({
+                        'Уровень': level,
+                        'Количество_предметов': len(data['items']),
+                        'Общий_объем': data['total_volume'],
+                        'Общий_вес': data['total_weight'],
+                        'Диапазон_высот': f"{data['height_range'][0]:.1f} - {data['height_range'][1]:.1f}"
+                    })
+                
+                level_df = pd.DataFrame(level_data)
+                level_df.to_excel(writer, sheet_name='Анализ_по_уровням', index=False)
+            
+            # Лист 4: Использование ориентаций
+            if analytics['placement_analysis']['orientation_usage']:
+                orientation_data = []
+                for orientation, count in analytics['placement_analysis']['orientation_usage'].items():
+                    orientation_data.append({
+                        'Ориентация': orientation,
+                        'Количество_использований': count,
+                        'Процент': round(count / sum(analytics['placement_analysis']['orientation_usage'].values()) * 100, 2)
+                    })
+                
+                orientation_df = pd.DataFrame(orientation_data)
+                orientation_df.to_excel(writer, sheet_name='Ориентации', index=False)
+            
+            # Лист 5: Временная линия размещения
+            if analytics['spatial_analysis']['placement_timeline']:
+                timeline_df = pd.DataFrame(analytics['spatial_analysis']['placement_timeline'])
+                timeline_df.to_excel(writer, sheet_name='Временная_линия', index=False)
+            
+            # Лист 6: Рекомендации
+            recommendations_df = pd.DataFrame({
+                'Рекомендации': analytics['recommendations']
+            })
+            recommendations_df.to_excel(writer, sheet_name='Рекомендации', index=False)
+        
+        return filename
+        
+    except Exception as e:
+        raise ValueError(f"Ошибка при создании Excel отчета: {str(e)}")
