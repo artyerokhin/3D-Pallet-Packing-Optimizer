@@ -1,23 +1,15 @@
-from py3dbp import Packer
-import time
+from .base_packer import BasePacker
 
-class LAFFPacker(Packer):
+class LAFFPacker(BasePacker):
     def __init__(self):
         super().__init__()
-        self.unpacked_items = []
-        self.packing_issues = []
         self.levels = []
-        self.calculation_time = 0
 
     def pack(self):
-        start_time = time.time()
-        if not self.bins or not self.items:
+        self._start_timing()
+        
+        if not self._initialize_packing():
             return
-
-        self.unpacked_items = []
-        self.packing_issues = []
-        self.bins[0].items = []
-        self.levels = []
 
         # Сортируем предметы по площади основания и высоте
         sorted_items = sorted(
@@ -76,13 +68,12 @@ class LAFFPacker(Packer):
         for item in sorted_items:
             self.packing_issues.append(f"Не удалось разместить {item.name}")
 
-        end_time = time.time()
-        self.calculation_time = end_time - start_time
+        self._end_timing()
 
     def _find_best_position(self, item, level_height, placed_items, max_width, max_height):
         best_position = None
         min_waste = float('inf')
-        
+
         # Создаем сетку возможных позиций
         positions = [(0, 0)]
         for placed_item in placed_items:
@@ -91,20 +82,21 @@ class LAFFPacker(Packer):
 
         # Проверяем каждую возможную позицию
         for x, y in positions:
-            if self._can_place_item(item, x, y, level_height, placed_items, max_width, max_height):
+            if self._can_place_item_level(item, x, y, level_height, placed_items, max_width, max_height):
                 waste = self._calculate_waste(item, x, y, placed_items)
                 if waste < min_waste:
                     min_waste = waste
                     best_position = (x, y)
+
         return best_position
 
-    def _can_place_item(self, item, x, y, z, placed_items, max_width, max_height):
+    def _can_place_item_level(self, item, x, y, z, placed_items, max_width, max_height):
         # Проверка границ контейнера
         if (x + item.width > max_width or
             y + item.height > max_height):
             return False
 
-        # Проверка пересечений
+        # Проверка пересечений с предметами на том же уровне
         for other in placed_items:
             if (x < other.position[0] + other.width and
                 x + item.width > other.position[0] and
@@ -112,19 +104,10 @@ class LAFFPacker(Packer):
                 y + item.height > other.position[1]):
                 return False
 
-        # Проверка поддержки снизу
+        # Используем базовую проверку поддержки только если не на полу
         if z > 0:
-            support_area = 0
-            required_support = item.width * item.height * 0.8
-            for other in self.bins[0].items:
-                if other.position[2] + other.depth == z:
-                    x_overlap = max(0, min(x + item.width, other.position[0] + other.width) -
-                                  max(x, other.position[0]))
-                    y_overlap = max(0, min(y + item.height, other.position[1] + other.height) -
-                                  max(y, other.position[1]))
-                    support_area += x_overlap * y_overlap
-            if support_area < required_support:
-                return False
+            return self._check_support(item, x, y, z)
+
         return True
 
     def _calculate_waste(self, item, x, y, placed_items):
@@ -143,5 +126,5 @@ class LAFFPacker(Packer):
                 if y + item.height == other.position[1] or y == other.position[1] + other.height:
                     contact_area += min(item.width, other.width)
 
-        # Возвращаем оценку "пустого" пространства
-        return -(contact_area)
+        # ИСПРАВЛЕНО: добавлен return
+        return -contact_area

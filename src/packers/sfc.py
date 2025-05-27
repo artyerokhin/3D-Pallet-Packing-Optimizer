@@ -1,22 +1,17 @@
-from py3dbp import Packer
-import time
+# src/packers/sfc.py
+from .base_packer import BasePacker
+import math
 
-class SFCPacker(Packer):
+class SFCPacker(BasePacker):
     def __init__(self):
         super().__init__()
-        self.unpacked_items = []
-        self.packing_issues = []
-        self.grid_size = 10  # Размер сетки для дискретизации пространства
-        self.calculation_time = 0
+        self.grid_size = 15  # Увеличиваем размер сетки для более надежного размещения
 
     def pack(self):
-        start_time = time.time()
-        if not self.bins or not self.items:
+        self._start_timing()
+        
+        if not self._initialize_packing():
             return
-
-        self.unpacked_items = []
-        self.packing_issues = []
-        self.bins[0].items = []
 
         # Сортировка по весу и объему
         sorted_items = sorted(
@@ -24,82 +19,127 @@ class SFCPacker(Packer):
             key=lambda x: (-x.weight, -(x.width * x.height * x.depth))
         )
 
-        # Заполняем пространство по спиральной кривой
         for item in sorted_items:
-            placed = False
-            for z in range(0, self.bins[0].depth - item.depth + 1, self.grid_size):
-                if placed:
-                    break
-                for spiral_pos in self._get_spiral_positions():
-                    x, y = spiral_pos
-                    if self._can_place_item(item, x, y, z):
-                        item.position = [x, y, z]
-                        self.bins[0].items.append(item)
-                        placed = True
-                        break
-
-            if not placed:
+            best_position = self._find_spiral_position_safe(item)
+            
+            if best_position:
+                x, y, z, width, height, depth = best_position
+                # Обновляем размеры предмета согласно выбранной ориентации
+                item.width, item.height, item.depth = width, height, depth
+                item.position = [x, y, z]
+                self.bins[0].items.append(item)
+            else:
                 self.unpacked_items.append(item)
                 self.packing_issues.append(f"Не удалось разместить {item.name}")
 
-        end_time = time.time()
-        self.calculation_time = end_time - start_time
+        self._end_timing()
 
-    def _get_spiral_positions(self):
-        """Генерирует позиции по спиральной кривой"""
-        positions = []
-        max_dim = max(self.bins[0].width, self.bins[0].height)
-        x = y = 0
-        dx = 0
-        dy = -self.grid_size
+    def _find_spiral_position_safe(self, item):
+        """Безопасный поиск позиции по спиральной кривой с поворотом"""
+        best_position = None
+        min_height = float('inf')
         
-        for _ in range(max_dim * max_dim):
-            if (-max_dim/2 < x <= max_dim/2) and (-max_dim/2 < y <= max_dim/2):
-                if 0 <= x < self.bins[0].width and 0 <= y < self.bins[0].height:
-                    positions.append((x, y))
-            if x == y or (x < 0 and x == -y) or (x > 0 and x == 1-y):
-                dx, dy = -dy, dx
-            x += dx
-            y += dy
-        return positions
+        # Сначала пытаемся разместить на полу
+        for x, y in self._get_spiral_positions():
+            for width, height, depth in self._get_item_orientations(item):
+                if self._can_place_item_safe(item, width, height, depth, x, y, 0):
+                    return (x, y, 0, width, height, depth)
 
-    def _can_place_item(self, item, x, y, z):
-        """Проверяет возможность размещения предмета"""
+        # Затем пытаемся разместить на существующих предметах
+        for other in self.bins[0].items:
+            z = other.position[2] + other.depth
+            if z < self.bins[0].depth:
+                # Проверяем позиции на поверхности существующих предметов
+                surface_positions = [
+                    (other.position[0], other.position[1], z),
+                    (other.position[0] + other.width, other.position[1], z),
+                    (other.position[0], other.position[1] + other.height, z),
+                    (other.position[0] + other.width, other.position[1] + other.height, z)
+                ]
+                
+                for x, y, z in surface_positions:
+                    for width, height, depth in self._get_item_orientations(item):
+                        if (x + width <= self.bins[0].width and 
+                            y + height <= self.bins[0].height and
+                            z + depth <= self.bins[0].depth and
+                            self._can_place_item_safe(item, width, height, depth, x, y, z)):
+                            
+                            if z < min_height:
+                                min_height = z
+                                best_position = (x, y, z, width, height, depth)
+
+        return best_position
+
+    def _can_place_item_safe(self, item, width, height, depth, x, y, z):
+        """Безопасная проверка размещения без пересечений"""
         # Проверка границ контейнера
-        if (x + item.width > self.bins[0].width or
-            y + item.height > self.bins[0].height or
-            z + item.depth > self.bins[0].depth):
+        if (x + width > self.bins[0].width or
+            y + height > self.bins[0].height or
+            z + depth > self.bins[0].depth):
             return False
 
-        # Проверка пересечений
+        # Проверка пересечений с существующими предметами
         for other in self.bins[0].items:
-            if (x < other.position[0] + other.width and
-                x + item.width > other.position[0] and
-                y < other.position[1] + other.height and
-                y + item.height > other.position[1] and
-                z < other.position[2] + other.depth and
-                z + item.depth > other.position[2]):
+            if self._check_intersection_orientation(
+                x, y, z, width, height, depth,
+                other.position[0], other.position[1], other.position[2],
+                other.width, other.height, other.depth
+            ):
                 return False
 
-        # Проверка поддержки снизу и веса
+        # Проверка поддержки снизу (если не на полу)
         if z > 0:
-            support_area = 0
-            required_support = item.width * item.height * 0.8
-            supporting_boxes = []
-            
-            for other in self.bins[0].items:
-                if abs(other.position[2] + other.depth - z) < 0.1:
-                    x_overlap = max(0, min(x + item.width, other.position[0] + other.width) -
-                                  max(x, other.position[0]))
-                    y_overlap = max(0, min(y + item.height, other.position[1] + other.height) -
-                                  max(y, other.position[1]))
-                    if x_overlap > 0 and y_overlap > 0:
-                        if other.weight < item.weight:
-                            return False
-                        supporting_boxes.append(other)
-                        support_area += x_overlap * y_overlap
-                        
-            if support_area < required_support:
-                return False
+            return self._check_support_orientation(width, height, depth, x, y, z, 0.5)
+
+        # Проверка весового ограничения
+        if not self._check_weight_limit(item.weight):
+            return False
 
         return True
+
+    def _get_spiral_positions(self):
+        """Улучшенная генерация спиральных позиций"""
+        positions = []
+        center_x = self.bins[0].width // 2
+        center_y = self.bins[0].height // 2
+        
+        # Добавляем центральную позицию
+        positions.append((center_x, center_y))
+        
+        # Генерируем спираль от центра
+        max_radius = min(center_x, center_y)
+        
+        for radius in range(self.grid_size, max_radius, self.grid_size):
+            # Количество точек на окружности
+            circumference = 2 * math.pi * radius
+            num_points = max(8, int(circumference / self.grid_size))
+            
+            for i in range(num_points):
+                angle = 2 * math.pi * i / num_points
+                x = int(center_x + radius * math.cos(angle))
+                y = int(center_y + radius * math.sin(angle))
+                
+                # Проверяем, что позиция в пределах контейнера
+                if (0 <= x < self.bins[0].width and 
+                    0 <= y < self.bins[0].height):
+                    positions.append((x, y))
+        
+        # Добавляем угловые позиции для лучшего покрытия
+        corner_positions = [
+            (0, 0),
+            (self.bins[0].width - self.grid_size, 0),
+            (0, self.bins[0].height - self.grid_size),
+            (self.bins[0].width - self.grid_size, self.bins[0].height - self.grid_size)
+        ]
+        
+        for x, y in corner_positions:
+            if (x, y) not in positions and x >= 0 and y >= 0:
+                positions.append((x, y))
+        
+        # Добавляем сетку для лучшего покрытия
+        for x in range(0, self.bins[0].width, self.grid_size * 2):
+            for y in range(0, self.bins[0].height, self.grid_size * 2):
+                if (x, y) not in positions:
+                    positions.append((x, y))
+        
+        return positions
