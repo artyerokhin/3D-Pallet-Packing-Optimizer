@@ -7,9 +7,11 @@ import pandas as pd
 from datetime import datetime
 import json
 import os
+import requests
+import time
 
 from src.utils.constants import STANDARD_BOXES, PackingMethod, method_descriptions
-from src.utils.visualization import create_3d_visualization, get_box_type_from_name
+from src.utils.visualization import create_3d_visualization, get_box_type_from_name, display_api_results
 from src.utils.file_handlers import load_boxes_from_file, save_packing_result
 from src.packers.weight_aware import WeightAwarePacker
 from src.packers.extreme_points import ExtremePointPacker
@@ -19,8 +21,9 @@ from src.packers.sfc import SFCPacker
 
 # Импорты системы валидации
 from src.validation.validators import DataValidator, ValidationConfig
-from src.utils.error_display import ErrorDisplayManager
+from src.utils.streamlit_error_display import StreamlitErrorDisplayManager
 from src.utils.app_state_manager import AppStateManager
+
 
 def main():
     st.title("3D Bin Packing - Упаковка на поддон")
@@ -28,11 +31,14 @@ def main():
     # Инициализация менеджеров
     state_manager = AppStateManager()
     validator = DataValidator()
-    error_display = ErrorDisplayManager()
+    error_display = StreamlitErrorDisplayManager()
     
-    # Настройки валидации в боковой панели
+    # Настройки в боковой панели
     with st.sidebar:
-        st.header("Настройки валидации")
+        st.header("Настройки")
+        
+        # Настройки валидации
+        st.subheader("Валидация")
         strict_mode = st.checkbox("Строгий режим валидации", value=False)
         
         if strict_mode:
@@ -40,6 +46,12 @@ def main():
             config.MIN_DENSITY = 0.05
             config.MAX_DENSITY = 8.0
             validator = DataValidator(config)
+        
+        # Настройки API
+        st.subheader("API")
+        use_api = st.checkbox("Использовать API для расчетов", value=False)
+        if use_api:
+            api_url = st.text_input("URL API", value="http://localhost:8000")
     
     # Выбор метода упаковки
     packing_method = st.selectbox(
@@ -262,60 +274,142 @@ def main():
                 else:
                     st.stop()
         
-        # Создание packer'а с настройками
-        if packing_method == PackingMethod.WEIGHT_AWARE.value:
-            packer = WeightAwarePacker(
-                support_threshold=state_manager.get_state_summary()['algorithm_params']['support_threshold'],
-                weight_check_enabled=state_manager.get_state_summary()['algorithm_params']['weight_check']
-            )
-        elif packing_method == PackingMethod.EXTREME_POINTS.value:
-            packer = ExtremePointPacker()
-        elif packing_method == PackingMethod.LAFF.value:
-            packer = LAFFPacker()
-        elif packing_method == PackingMethod.CORNER_POINTS.value:
-            packer = CornerPointPacker()
-        elif packing_method == PackingMethod.SFC.value:
-            packer = SFCPacker()
-
-        # Добавляем поддон
-        packer.add_bin(
-            Bin('Поддон', pallet_length, pallet_width, pallet_height, pallet_weight)
-        )
-
-        # Добавляем коробки
-        item_count = 0
-        if use_custom_boxes and boxes_df is not None:
-            for _, row in boxes_df.iterrows():
-                for i in range(int(row['quantity'])):
-                    item_count += 1
-                    packer.add_item(
-                        Item(f'{row["name"]}_{i}',
-                             row['length'],
-                             row['width'],
-                             row['height'],
-                             row['weight'])
-                    )
+        # Выбор между API и локальным расчетом
+        if use_api:
+            # Отправка запроса к API
+            try:
+                # Подготовка данных для API
+                boxes_data_for_api = []
+                if use_custom_boxes and boxes_df is not None:
+                    boxes_data_for_api = boxes_df.to_dict('records')
+                else:
+                    for box_name, quantity in box_quantities.items():
+                        if quantity > 0:
+                            box_info = STANDARD_BOXES[box_name]
+                            boxes_data_for_api.append({
+                                'name': box_name,
+                                'length': box_info['dimensions'][0],
+                                'width': box_info['dimensions'][1],
+                                'height': box_info['dimensions'][2],
+                                'weight': box_info['weight'],
+                                'quantity': quantity
+                            })
+                
+                request_data = {
+                    "pallet": pallet_data,
+                    "boxes": boxes_data_for_api,
+                    "method": packing_method,
+                    "support_threshold": support_threshold if packing_method == PackingMethod.WEIGHT_AWARE.value else 0.8,
+                    "weight_check_enabled": weight_check if packing_method == PackingMethod.WEIGHT_AWARE.value else True
+                }
+                
+                # Создание задачи
+                with st.spinner("Отправка запроса к API..."):
+                    response = requests.post(f"{api_url}/pack", json=request_data, timeout=30)
+                
+                if response.status_code == 200:
+                    task_data = response.json()
+                    task_id = task_data["task_id"]
+                    
+                    # Ожидание результата
+                    with st.spinner("Выполняется упаковка через API..."):
+                        progress_bar = st.progress(0)
+                        start_time = time.time()
+                        
+                        while True:
+                            status_response = requests.get(f"{api_url}/status/{task_id}", timeout=10)
+                            status_data = status_response.json()
+                            
+                            # Обновляем прогресс-бар
+                            elapsed_time = time.time() - start_time
+                            progress = min(elapsed_time / 30, 0.95)  # Максимум 95% до завершения
+                            progress_bar.progress(progress)
+                            
+                            if status_data["status"] == "completed":
+                                progress_bar.progress(1.0)
+                                result_response = requests.get(f"{api_url}/result/{task_id}", timeout=10)
+                                api_result = result_response.json()
+                                
+                                # Отображение результатов API
+                                display_api_results(api_result)
+                                break
+                            elif status_data["status"] == "failed":
+                                st.error(f"Ошибка API: {status_data.get('error', 'Неизвестная ошибка')}")
+                                break
+                            
+                            time.sleep(1)
+                            
+                            # Таймаут через 60 секунд
+                            if elapsed_time > 60:
+                                st.error("Превышено время ожидания ответа от API")
+                                break
+                else:
+                    st.error(f"Ошибка API ({response.status_code}): {response.text}")
+                    
+            except requests.exceptions.ConnectionError:
+                st.error("Не удается подключиться к API. Убедитесь, что сервер запущен.")
+            except requests.exceptions.Timeout:
+                st.error("Превышено время ожидания ответа от API.")
+            # except Exception as e:
+            #     st.error(f"Ошибка при работе с API: {str(e)}")
+        
         else:
-            for box_name, quantity in box_quantities.items():
-                box_info = STANDARD_BOXES[box_name]
-                for i in range(quantity):
-                    item_count += 1
-                    packer.add_item(
-                        Item(f'{box_name}_{i}',
-                             box_info['dimensions'][0],
-                             box_info['dimensions'][1],
-                             box_info['dimensions'][2],
-                             box_info['weight'])
-                    )
+            # Локальный расчет
+            # Создание packer'а с настройками
+            if packing_method == PackingMethod.WEIGHT_AWARE.value:
+                packer = WeightAwarePacker(
+                    support_threshold=state_manager.get_state_summary()['algorithm_params']['support_threshold'],
+                    weight_check_enabled=state_manager.get_state_summary()['algorithm_params']['weight_check']
+                )
+            elif packing_method == PackingMethod.EXTREME_POINTS.value:
+                packer = ExtremePointPacker()
+            elif packing_method == PackingMethod.LAFF.value:
+                packer = LAFFPacker()
+            elif packing_method == PackingMethod.CORNER_POINTS.value:
+                packer = CornerPointPacker()
+            elif packing_method == PackingMethod.SFC.value:
+                packer = SFCPacker()
 
-        # Выполняем упаковку
-        packer.pack()
+            # Добавляем поддон
+            packer.add_bin(
+                Bin('Поддон', pallet_length, pallet_width, pallet_height, pallet_weight)
+            )
 
-        # Сохраняем результаты в состоянии
-        state_manager.save_packing_results(
-            packer, item_count, use_custom_boxes, 
-            boxes_df, box_quantities if not use_custom_boxes else None
-        )
+            # Добавляем коробки
+            item_count = 0
+            if use_custom_boxes and boxes_df is not None:
+                for _, row in boxes_df.iterrows():
+                    for i in range(int(row['quantity'])):
+                        item_count += 1
+                        packer.add_item(
+                            Item(f'{row["name"]}_{i}',
+                                 row['length'],
+                                 row['width'],
+                                 row['height'],
+                                 row['weight'])
+                        )
+            else:
+                for box_name, quantity in box_quantities.items():
+                    box_info = STANDARD_BOXES[box_name]
+                    for i in range(quantity):
+                        item_count += 1
+                        packer.add_item(
+                            Item(f'{box_name}_{i}',
+                                 box_info['dimensions'][0],
+                                 box_info['dimensions'][1],
+                                 box_info['dimensions'][2],
+                                 box_info['weight'])
+                        )
+
+            # Выполняем упаковку
+            with st.spinner("Выполняется упаковка..."):
+                packer.pack()
+
+            # Сохраняем результаты в состоянии
+            state_manager.save_packing_results(
+                packer, item_count, use_custom_boxes, 
+                boxes_df, box_quantities if not use_custom_boxes else None
+            )
 
     # Отображаем результаты, если они есть
     if state_manager.has_results():
@@ -325,7 +419,7 @@ def main():
         use_custom_boxes = results['use_custom_boxes']
         boxes_df = results['boxes_df']
 
-        st.header("Результаты упаковки")
+        st.header("Результаты упаковки (Локальный расчет)")
         st.write(f"Метод упаковки: {packing_method}")
         st.write(f"Время расчета: {packer.calculation_time:.2f} секунд")
 

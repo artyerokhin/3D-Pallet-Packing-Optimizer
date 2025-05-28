@@ -1,6 +1,7 @@
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+import streamlit as st
 from .constants import STANDARD_BOXES
 
 def get_box_type_from_name(name):
@@ -157,3 +158,38 @@ def create_3d_visualization(packer):
     )
     
     return fig
+
+def display_api_results(api_result):
+    """Отображение результатов, полученных от API"""
+    summary = api_result["summary"]
+    
+    st.header("Результаты упаковки (API)")
+    st.write(f"Всего коробок: {summary['total_items']}")
+    st.write(f"Успешно упаковано: {summary['packed_items']}")
+    st.write(f"Не удалось упаковать: {summary['unpacked_items']}")
+    st.write(f"Эффективность использования пространства: {summary['space_utilization']:.1f}%")
+    st.write(f"Время расчета: {summary['calculation_time']:.2f} секунд")
+    
+    # Отображение упакованных предметов
+    if api_result["packed_items"]:
+        st.subheader("Упакованные предметы")
+        packed_df = pd.DataFrame([
+            {
+                "Название": item["name"],
+                "X": item["position"]["x"],
+                "Y": item["position"]["y"],
+                "Z": item["position"]["z"],
+                "Ширина": item["dimensions"]["width"],
+                "Высота": item["dimensions"]["height"],
+                "Глубина": item["dimensions"]["depth"],
+                "Вес": item["weight"]
+            }
+            for item in api_result["packed_items"]
+        ])
+        st.dataframe(packed_df)
+    
+    # Отображение неупакованных предметов
+    if api_result["unpacked_items"]:
+        st.subheader("Неупакованные предметы")
+        unpacked_df = pd.DataFrame(api_result["unpacked_items"])
+        st.dataframe(unpacked_df)

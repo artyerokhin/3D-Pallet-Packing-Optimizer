@@ -68,6 +68,7 @@ class DataValidator:
     def validate_box_data(self, box_data: Dict[str, Any]) -> ValidationResult:
         result = ValidationResult()
         required_fields = ['length', 'width', 'height', 'weight']
+        
         for field in required_fields:
             if field not in box_data or box_data[field] is None:
                 result.add_error(ValidationError(
@@ -78,6 +79,7 @@ class DataValidator:
                     f"Добавьте поле {field} с числовым значением"
                 ))
                 continue
+            
             try:
                 value = float(box_data[field])
                 if np.isnan(value) or np.isinf(value):
@@ -92,10 +94,11 @@ class DataValidator:
                     "Введите числовое значение (например: 30.5)"
                 ))
                 continue
+
         if not result.is_valid:
             return result
 
-        # Размеры
+        # Валидация размеров
         for dim_field in ['length', 'width', 'height']:
             value = box_data[dim_field]
             if value <= 0:
@@ -123,7 +126,7 @@ class DataValidator:
                     f"Уменьшите до {self.config.MAX_DIMENSION} см или меньше"
                 ))
 
-        # Вес
+        # Валидация веса
         weight = box_data['weight']
         if weight <= 0:
             result.add_error(ValidationError(
@@ -150,7 +153,7 @@ class DataValidator:
                 f"Уменьшите до {self.config.MAX_WEIGHT} кг или меньше"
             ))
 
-        # Плотность
+        # Проверка плотности
         if result.is_valid:
             volume_dm3 = (box_data['length'] * box_data['width'] * box_data['height']) / 1000
             if volume_dm3 > 0:
@@ -168,7 +171,7 @@ class DataValidator:
                         "Проверьте правильность размеров и веса. Возможно, ошибка в единицах измерения."
                     ))
 
-        # Количество
+        # Валидация количества
         if 'quantity' in box_data and box_data['quantity'] is not None:
             try:
                 quantity = int(box_data['quantity'])
@@ -203,6 +206,7 @@ class DataValidator:
             if len(description) > 100:
                 result.add_warning("Описание слишком длинное (более 100 символов)")
             box_data['description'] = description
+        
         for field in ['fragile', 'stackable', 'hazardous']:
             if field in box_data and box_data[field] is not None:
                 try:
@@ -213,6 +217,7 @@ class DataValidator:
     def validate_pallet_data(self, pallet_data: Dict[str, Any]) -> ValidationResult:
         result = ValidationResult()
         required_fields = ['length', 'width', 'height', 'max_weight']
+        
         for field in required_fields:
             if field not in pallet_data or pallet_data[field] is None:
                 result.add_error(ValidationError(
@@ -223,6 +228,7 @@ class DataValidator:
                     f"Добавьте поле {field}"
                 ))
                 continue
+            
             try:
                 value = float(pallet_data[field])
                 if np.isnan(value) or np.isinf(value):
@@ -236,8 +242,11 @@ class DataValidator:
                     pallet_data[field],
                     "Введите числовое значение"
                 ))
+
         if not result.is_valid:
             return result
+
+        # Валидация размеров поддона
         for dim_field in ['length', 'width']:
             value = pallet_data[dim_field]
             if value <= 0:
@@ -264,6 +273,8 @@ class DataValidator:
                     value,
                     f"Уменьшите до {self.config.MAX_PALLET_DIMENSION} см или меньше"
                 ))
+
+        # Валидация высоты поддона
         height = pallet_data['height']
         if height <= 0:
             result.add_error(ValidationError(
@@ -289,6 +300,8 @@ class DataValidator:
                 height,
                 f"Уменьшите до {self.config.MAX_PALLET_HEIGHT} см или меньше"
             ))
+
+        # Валидация грузоподъемности
         max_weight = pallet_data['max_weight']
         if max_weight <= 0:
             result.add_error(ValidationError(
@@ -306,6 +319,7 @@ class DataValidator:
             result.add_warning(
                 f"Очень высокая грузоподъемность поддона ({max_weight} кг). Убедитесь в корректности значения"
             )
+
         self._check_standard_pallet_sizes(pallet_data, result)
         return result
 
@@ -314,11 +328,13 @@ class DataValidator:
         width = pallet_data['width']
         tolerance = 5.0
         is_standard = False
+        
         for std_length, std_width in self.config.STANDARD_PALLET_SIZES:
             if (abs(length - std_length) <= tolerance and abs(width - std_width) <= tolerance) or \
                (abs(length - std_width) <= tolerance and abs(width - std_length) <= tolerance):
                 is_standard = True
                 break
+        
         if not is_standard:
             result.add_warning(
                 f"Нестандартный размер поддона ({length}x{width} см). "
@@ -327,6 +343,7 @@ class DataValidator:
 
     def validate_boxes_list(self, boxes: List[Dict[str, Any]]) -> ValidationResult:
         result = ValidationResult()
+        
         if len(boxes) == 0:
             result.add_error(ValidationError(
                 ValidationErrorType.QUANTITY_ERROR,
@@ -336,39 +353,51 @@ class DataValidator:
                 "Добавьте хотя бы одну коробку"
             ))
             return result
+
         if len(boxes) > self.config.MAX_BOXES_COUNT:
             result.add_warning(
                 f"Очень много коробок ({len(boxes)}). Это может замедлить расчет или привести к частичной упаковке."
             )
+
         total_weight = 0
         total_volume = 0
         valid_boxes_count = 0
+        
         for i, box in enumerate(boxes):
             box_result = self.validate_box_data(box)
+            
             for error in box_result.errors:
                 error.field = f"box_{i+1}.{error.field}"
                 result.add_error(error)
+            
             for warning in box_result.warnings:
                 result.add_warning(f"Коробка {i+1}: {warning}")
+            
             if box_result.is_valid:
                 valid_boxes_count += 1
                 total_weight += box.get('weight', 0)
                 volume = (box.get('length', 0) * box.get('width', 0) * box.get('height', 0)) / 1000000
                 total_volume += volume
+
         if total_weight > 10000:
             result.add_warning(f"Очень большой общий вес коробок: {total_weight:.1f} кг")
+        
         if total_volume > 100:
             result.add_warning(f"Очень большой общий объем коробок: {total_volume:.1f} м³")
+        
         if valid_boxes_count < len(boxes):
             result.add_warning(
                 f"Из {len(boxes)} коробок валидны только {valid_boxes_count}. Исправьте ошибки в остальных коробках."
             )
+
         return result
 
     def validate_packing_feasibility(self, boxes: List[Dict[str, Any]], pallet: Dict[str, Any]) -> ValidationResult:
         result = ValidationResult()
+        
         boxes_validation = self.validate_boxes_list(boxes)
         pallet_validation = self.validate_pallet_data(pallet)
+        
         if not boxes_validation.is_valid or not pallet_validation.is_valid:
             result.add_error(ValidationError(
                 ValidationErrorType.COMPATIBILITY_ERROR,
@@ -378,6 +407,7 @@ class DataValidator:
                 "Исправьте ошибки в данных коробок и поддона"
             ))
             return result
+
         total_weight = sum(box.get('weight', 0) for box in boxes)
         total_volume = sum(
             (box.get('length', 0) * box.get('width', 0) * box.get('height', 0)) / 1000000
@@ -419,6 +449,7 @@ class DataValidator:
         for i, box in enumerate(boxes):
             if not self._can_box_fit_on_pallet(box, pallet):
                 oversized_boxes.append(i + 1)
+
         if oversized_boxes:
             if len(oversized_boxes) == 1:
                 result.add_warning(
@@ -428,6 +459,7 @@ class DataValidator:
                 result.add_warning(
                     f"{len(oversized_boxes)} коробок не помещаются на поддон ни в одной ориентации и точно не будут упакованы."
                 )
+
         self._check_weight_distribution(boxes, pallet, result)
         self._check_stacking_feasibility(boxes, result)
         return result
@@ -435,6 +467,7 @@ class DataValidator:
     def _can_box_fit_on_pallet(self, box: Dict[str, Any], pallet: Dict[str, Any]) -> bool:
         box_dims = [box.get('length', 0), box.get('width', 0), box.get('height', 0)]
         pallet_dims = [pallet.get('length', 0), pallet.get('width', 0), pallet.get('height', 0)]
+        
         for rotation in [(0,1,2), (0,2,1), (1,0,2), (1,2,0), (2,0,1), (2,1,0)]:
             rotated_dims = [box_dims[rotation[i]] for i in range(3)]
             if all(rotated_dims[i] <= pallet_dims[i] for i in range(3)):
@@ -444,13 +477,16 @@ class DataValidator:
     def _check_weight_distribution(self, boxes: List[Dict[str, Any]], pallet: Dict[str, Any], result: ValidationResult):
         if not boxes:
             return
+
         weights = [box.get('weight', 0) for box in boxes]
         max_box_weight = max(weights)
         avg_box_weight = sum(weights) / len(weights)
+
         if max_box_weight > avg_box_weight * 5:
             result.add_warning(
                 f"Обнаружена очень тяжелая коробка ({max_box_weight:.1f} кг) при среднем весе {avg_box_weight:.1f} кг. Это может усложнить упаковку."
             )
+
         pallet_area = pallet.get('length', 0) * pallet.get('width', 0) / 10000
         if pallet_area > 0:
             weight_density = sum(weights) / pallet_area
@@ -462,13 +498,36 @@ class DataValidator:
     def _check_stacking_feasibility(self, boxes: List[Dict[str, Any]], result: ValidationResult):
         if len(boxes) < 2:
             return
+
         fragile_boxes = [i for i, box in enumerate(boxes) if box.get('fragile', False)]
         if fragile_boxes:
             result.add_warning(
                 f"Обнаружены хрупкие коробки (номера: {', '.join(map(str, [i+1 for i in fragile_boxes]))}). Они должны размещаться сверху или отдельно."
             )
+
         non_stackable = [i for i, box in enumerate(boxes) if not box.get('stackable', True)]
         if non_stackable:
             result.add_warning(
                 f"Коробки {', '.join(map(str, [i+1 for i in non_stackable]))} не могут использоваться как основание для других коробок."
             )
+
+def validate_csv_data(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    validator = DataValidator()
+    validated_boxes = []
+    errors = []
+
+    for i, row in enumerate(data):
+        try:
+            result = validator.validate_box_data(row)
+            if result.is_valid:
+                validated_boxes.append(row)
+            else:
+                error_messages = [error.message for error in result.errors]
+                errors.append(f"Строка {i+1}: {'; '.join(error_messages)}")
+        except Exception as e:
+            errors.append(f"Строка {i+1}: Неожиданная ошибка - {str(e)}")
+
+    if errors:
+        raise ValueError(f"Обнаружены ошибки в данных:\n" + "\n".join(errors[:10]))
+
+    return validated_boxes
